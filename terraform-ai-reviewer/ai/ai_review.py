@@ -1,54 +1,49 @@
-from openai import OpenAI
 import os
 import sys
+import requests
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
+webhook = os.getenv("SLACK_WEBHOOK_URL")
+tf_env = os.getenv("TF_ENV", "unknown")
+repo = os.getenv("GITHUB_REPOSITORY", "local")
+branch = os.getenv("GITHUB_REF_NAME", "local")
+actor = os.getenv("GITHUB_ACTOR", "local")
+run_id = os.getenv("GITHUB_RUN_ID", "")
 
-if not os.path.exists("tfplan.txt"):
-    print("ERROR: tfplan.txt not found.")
+if not webhook:
+    print("ERROR: SLACK_WEBHOOK_URL is missing.")
     sys.exit(1)
 
-client = OpenAI(
-    base_url=OLLAMA_BASE_URL,
-    api_key="ollama"
-)
+if not os.path.exists("ai-report.txt"):
+    print("ERROR: ai-report.txt not found.")
+    sys.exit(1)
 
-with open("tfplan.txt", "r") as file:
-    terraform_plan = file.read()
+with open("ai-report.txt", "r", errors="ignore") as file:
+    report = file.read()
 
-prompt = f"""
-You are a senior Terraform, AWS, DevOps, and AIOps expert.
+run_url = ""
+if repo != "local" and run_id:
+    run_url = f"https://github.com/{repo}/actions/runs/{run_id}"
 
-Review this Terraform plan.
+message = f"""
+*Terraform AI Review Report*
 
-Give output in this format:
+*Environment:* {tf_env}
+*Repository:* {repo}
+*Branch:* {branch}
+*Triggered by:* {actor}
+*Run:* {run_url}
 
-1. Summary of infrastructure
-2. Resources that will be created
-3. Security risks
-4. Cost risks
-5. Best-practice issues
-6. Recommended fixes
-7. Beginner-friendly explanation
-
-Terraform Plan:
-{terraform_plan}
+```{report[:3500]}```
 """
 
-response = client.chat.completions.create(
-    model=OLLAMA_MODEL,
-    messages=[
-        {
-            "role": "system",
-            "content": "You are an expert Terraform infrastructure reviewer."
-        },
-        {
-            "role": "user",
-            "content": prompt
-        }
-    ]
-)
+payload = {
+    "text": message
+}
 
-print(response.choices[0].message.content)
+response = requests.post(webhook, json=payload)
 
+if response.status_code != 200:
+    print(f"Slack notification failed: {response.status_code} {response.text}")
+    sys.exit(1)
+
+print("Slack notification sent successfully.")
